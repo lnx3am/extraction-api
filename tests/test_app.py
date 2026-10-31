@@ -200,6 +200,35 @@ def test_concurrent_duplicate_requests_extract_and_persist_once(tmp_path, monkey
     assert Ticket.model_validate_json(rows[0][1]) == ticket
 
 
+def test_concurrent_conflicting_bodies_reserve_key_for_only_one_payload(tmp_path, monkeypatch):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    extractor = Mock(return_value=ticket)
+    path = tmp_path / "extract.db"
+    client = TestClient(create_app(extractor, str(path)))
+    ready = Barrier(2)
+    headers = {"idempotency-key": "concurrent-conflict"}
+    payloads = [{"text": "Cannot log into my account"}, {"text": "Please refund my subscription"}]
+
+    def request(payload):
+        ready.wait(timeout=5)
+        return client.post("/extract", headers=headers, json=payload)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(request, payload) for payload in payloads]
+        responses = [future.result(timeout=15) for future in futures]
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    winner = next(i for i, response in enumerate(responses) if response.status_code == 200)
+    loser = 1 - winner
+    assert responses[loser].json() == {
+        "detail": "idempotency key reused for a different request"}
+    assert client.post("/extract", headers=headers, json=payloads[winner]).json() == ticket.model_dump()
+    assert client.post("/extract", headers=headers, json=payloads[loser]).status_code == 409
+    extractor.assert_called_once_with(payloads[winner]["text"])
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 1
+
+
 def test_blank_text_is_rejected_before_extraction(tmp_path, monkeypatch):
     monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
     calls = []
