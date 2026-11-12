@@ -423,6 +423,31 @@ def test_commit_contention_is_retryable_and_rolls_back(tmp_path, monkeypatch):
     assert extractor.call_count == 2
 
 
+def test_failed_cache_insert_does_not_reserve_key_and_allows_retry(tmp_path, monkeypatch):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    path = tmp_path / "extract.db"
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    extractor = Mock(return_value=ticket)
+    client = TestClient(create_app(extractor, str(path)), raise_server_exceptions=False)
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TRIGGER fail_cache BEFORE INSERT ON requests "
+                   "BEGIN SELECT RAISE(ABORT, 'cache write failed'); END")
+    headers = {"idempotency-key": "failed-cache-insert"}
+    payload = {"text": "Cannot log into my account"}
+    assert client.post("/extract", headers=headers, json=payload).status_code == 500
+    extractor.assert_called_once_with(payload["text"])
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
+        db.execute("DROP TRIGGER fail_cache")
+    recovered = client.post("/extract", headers=headers, json=payload)
+    assert recovered.status_code == 200
+    assert recovered.json() == ticket.model_dump()
+    assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+    assert extractor.call_count == 2
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT key FROM requests").fetchall() == [(headers["idempotency-key"],)]
+
+
 def test_connections_close_after_success_cache_conflict_and_failure(tmp_path, monkeypatch):
     monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
     connections = []
