@@ -19,6 +19,28 @@ from openai import (
 from extraction_api.app import Ticket, create_app, extract_live
 
 
+def test_failed_request_with_another_key_preserves_cached_result(tmp_path, monkeypatch):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    first = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    second = Ticket(category="billing", urgency=1, summary="Refund requested", needs_human=False)
+    extractor = Mock(side_effect=[first, RuntimeError("provider unavailable"), second])
+    client = TestClient(create_app(extractor, str(tmp_path / "extract.db")))
+    first_headers = {"idempotency-key": "first-request-key"}
+    second_headers = {"idempotency-key": "second-request-key"}
+    first_body = {"text": "Cannot log into my account"}
+    second_body = {"text": "Please refund my subscription"}
+
+    assert client.post("/extract", headers=first_headers, json=first_body).json() == first.model_dump()
+    assert client.post("/extract", headers=second_headers, json=second_body).status_code == 503
+    assert client.post("/extract", headers=first_headers, json=first_body).json() == first.model_dump()
+    assert client.post("/extract", headers=second_headers, json=second_body).json() == second.model_dump()
+    assert client.post("/extract", headers=first_headers, json=first_body).json() == first.model_dump()
+    assert client.post("/extract", headers=second_headers, json=second_body).json() == second.model_dump()
+    assert [call.args for call in extractor.call_args_list] == [
+        (first_body["text"],), (second_body["text"],), (second_body["text"],),
+    ]
+
+
 @pytest.mark.parametrize("field,value", [
     ("urgency", True), ("urgency", "3"), ("urgency", 3.0),
     ("needs_human", "false"), ("needs_human", 0), ("needs_human", 1),
