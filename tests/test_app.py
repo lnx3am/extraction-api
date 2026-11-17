@@ -84,6 +84,21 @@ def test_idempotency_and_conflict(tmp_path, monkeypatch):
     assert client.post("/extract", headers={"idempotency-key": "another-key"}, json=payload).status_code == 401
 
 
+def test_unknown_request_fields_do_not_extract_or_reserve_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    extractor = Mock(return_value=ticket)
+    client = TestClient(create_app(extractor, str(tmp_path / "extract.db")))
+    headers = {"idempotency-key": "unknown-field"}
+    payload = {"text": "Cannot log into my account"}
+    response = client.post("/extract", headers=headers, json={**payload, "tenant": "other"})
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "tenant"]
+    extractor.assert_not_called()
+    assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+    extractor.assert_called_once_with(payload["text"])
+
+
 def test_failed_extraction_can_retry_same_key(tmp_path, monkeypatch):
     monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
     calls = []
