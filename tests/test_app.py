@@ -19,6 +19,25 @@ from openai import (
 from extraction_api.app import Ticket, create_app, extract_live
 
 
+@pytest.mark.parametrize("urgency", [True, "3", 3.0])
+@pytest.mark.filterwarnings("ignore:Pydantic serializer warnings:UserWarning")
+def test_coerced_urgency_is_not_cached_and_same_key_can_retry(tmp_path, monkeypatch, urgency):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    invalid = ticket.model_copy(update={"urgency": urgency})
+    extractor = Mock(side_effect=[invalid, ticket])
+    path = tmp_path / "extract.db"
+    client = TestClient(create_app(extractor, str(path)))
+    headers = {"idempotency-key": "strict-urgency"}
+    payload = {"text": "Cannot log into my account"}
+    response = client.post("/extract", headers=headers, json=payload)
+    assert response.status_code == 503
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
+    assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+    assert extractor.call_count == 2
+
+
 def test_ticket_categories_are_enumerated_in_api_schema(tmp_path):
     app = create_app(db_path=str(tmp_path / "extract.db"))
     category = app.openapi()["components"]["schemas"]["Ticket"]["properties"]["category"]
