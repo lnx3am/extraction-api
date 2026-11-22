@@ -11,7 +11,7 @@ Support teams receive free-form messages but downstream systems need a small, st
 `HTTP request → validation → idempotency lookup → Responses API → Pydantic result → SQLite → response`
 
 The model sees a system instruction that treats ticket text as data. It cannot select arbitrary tools. An optional local API key protects the endpoint. No request text is logged by this service.
-Ticket urgency requires an integer from 1 to 5; booleans, strings, and floats are rejected rather than coerced. Invalid extractor results return HTTP 503 without caching, so the same idempotency key can be retried.
+Ticket urgency requires an integer from 1 to 5; booleans, strings, and floats are rejected rather than coerced. The `needs_human` flag requires a boolean; strings and numbers are rejected. Invalid extractor results return HTTP 503 without caching, so the same idempotency key can be retried.
 
 ## Concepts and choices
 

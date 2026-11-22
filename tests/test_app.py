@@ -389,3 +389,26 @@ def test_live_extraction_does_not_retry_permanent_provider_errors(monkeypatch, s
     assert client.responses.parse.call_count == 1
     assert delays == []
     client.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("flag", ["true", "false", 0, 1])
+@pytest.mark.filterwarnings("ignore:Pydantic serializer warnings:UserWarning")
+def test_coerced_human_flag_is_not_cached_and_same_key_can_retry(tmp_path, monkeypatch, flag):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    with pytest.raises(ValueError):
+        Ticket(**{**ticket.model_dump(), "needs_human": flag})
+    extractor = Mock(side_effect=[ticket.model_copy(update={"needs_human": flag}), ticket])
+    path = tmp_path / "extract.db"
+    client = TestClient(create_app(extractor, str(path)))
+    headers = {"idempotency-key": "strict-human-flag"}
+    payload = {"text": "Cannot log into my account"}
+    response = client.post("/extract", headers=headers, json=payload)
+    assert response.status_code == 503
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
+    for _ in range(2):
+        response = client.post("/extract", headers=headers, json=payload)
+        assert response.status_code == 200
+        assert response.json() == ticket.model_dump()
+    assert extractor.call_count == 2
