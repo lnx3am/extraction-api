@@ -412,3 +412,22 @@ def test_coerced_human_flag_is_not_cached_and_same_key_can_retry(tmp_path, monke
         assert response.status_code == 200
         assert response.json() == ticket.model_dump()
     assert extractor.call_count == 2
+
+
+def test_unknown_ticket_fields_are_not_cached(tmp_path, monkeypatch):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    malformed = SimpleNamespace(model_dump=lambda: {**ticket.model_dump(), "resolved": True})
+    extractor = Mock(side_effect=[malformed, ticket])
+    path = tmp_path / "extract.db"
+    client = TestClient(create_app(extractor, str(path)))
+    headers = {"idempotency-key": "unknown-ticket-field"}
+    payload = {"text": "Cannot log into my account"}
+    response = client.post("/extract", headers=headers, json=payload)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "extraction unavailable"}
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
+    assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+    assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+    assert extractor.call_count == 2

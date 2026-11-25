@@ -13,6 +13,8 @@ Support teams receive free-form messages but downstream systems need a small, st
 The model sees a system instruction that treats ticket text as data. It cannot select arbitrary tools. An optional local API key protects the endpoint. No request text is logged by this service.
 Ticket urgency requires an integer from 1 to 5; booleans, strings, and floats are rejected rather than coerced. The `needs_human` flag requires a boolean; strings and numbers are rejected. Invalid extractor results return HTTP 503 without caching, so the same idempotency key can be retried.
 
+Extracted tickets reject unknown fields. Unsupported extractor output returns HTTP 503 without caching, so the same idempotency key can be retried.
+
 ## Concepts and choices
 
 FastAPI supplies an explicit HTTP contract; Pydantic supplies schema enforcement; the official OpenAI SDK supplies structured output. SQLite makes the example runnable without infrastructure. The extractor is injected into `create_app`, so tests exercise the HTTP behavior without billing an API. The source lives in `app.py`; the API tests live in `tests/test_app.py`.
