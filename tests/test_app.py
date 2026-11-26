@@ -118,6 +118,35 @@ def test_unknown_request_fields_do_not_extract_or_reserve_key(tmp_path, monkeypa
     extractor.assert_called_once_with(payload["text"])
 
 
+@pytest.mark.parametrize("supplied", [None, "wrong-key"])
+@pytest.mark.parametrize("text", ["Cannot log into my account", "Different request body"])
+def test_cached_requests_require_auth_before_replay_or_conflict(
+    tmp_path, monkeypatch, supplied, text,
+):
+    monkeypatch.setenv("PORTFOLIO_API_KEY", "original-key")
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    extractor = Mock(return_value=ticket)
+    client = TestClient(create_app(extractor, str(tmp_path / "extract.db")))
+    headers = {"idempotency-key": "cached-auth-request", "x-api-key": "original-key"}
+    payload = {"text": "Cannot log into my account"}
+    assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+
+    # Cached data must remain protected after the configured key changes.
+    monkeypatch.setenv("PORTFOLIO_API_KEY", "rotated-key")
+    for key in (supplied, "original-key"):
+        headers.pop("x-api-key", None)
+        if key is not None:
+            headers["x-api-key"] = key
+        response = client.post("/extract", headers=headers, json={"text": text})
+        assert response.status_code == 401
+        assert response.json() == {"detail": "invalid API key"}
+    headers["x-api-key"] = "rotated-key"
+    assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+    assert client.post("/extract", headers=headers,
+                       json={"text": "Different request body"}).status_code == 409
+    extractor.assert_called_once_with(payload["text"])
+
+
 def test_failed_extraction_can_retry_same_key(tmp_path, monkeypatch):
     monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
     calls = []
