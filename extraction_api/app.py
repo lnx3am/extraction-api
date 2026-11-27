@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException
-from openai import APIConnectionError, APITimeoutError, InternalServerError, OpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    InternalServerError,
+    OpenAI,
+    RateLimitError,
+)
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -99,6 +106,10 @@ def create_app(extractor: Callable[[str], Ticket] = extract_live, db_path: str |
                     return Ticket.model_validate_json(row[1])
                 try:
                     result = Ticket.model_validate(extractor(request.text).model_dump())
+                except APIStatusError as exc:
+                    if exc.status_code < 500 and exc.status_code not in (408, 409, 429):
+                        raise HTTPException(502, "extraction provider request failed") from exc
+                    raise HTTPException(503, "extraction unavailable") from exc
                 except Exception as exc:
                     raise HTTPException(503, "extraction unavailable") from exc
                 db.execute("INSERT INTO requests VALUES (?,?,?)", (idempotency_key, digest, result.model_dump_json()))

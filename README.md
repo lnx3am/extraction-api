@@ -15,6 +15,8 @@ Ticket urgency requires an integer from 1 to 5; booleans, strings, and floats ar
 
 Extracted tickets reject unknown fields. Unsupported extractor output returns HTTP 503 without caching, so the same idempotency key can be retried.
 
+Permanent provider HTTP failures (such as invalid credentials or an unavailable model) return HTTP 502 with a generic message that excludes provider details. Transient provider failures return HTTP 503. Neither failure caches a result or reserves the idempotency key.
+
 ## Concepts and choices
 
 FastAPI supplies an explicit HTTP contract; Pydantic supplies schema enforcement; the official OpenAI SDK supplies structured output. SQLite makes the example runnable without infrastructure. The extractor is injected into `create_app`, so tests exercise the HTTP behavior without billing an API. The source lives in `app.py`; the API tests live in `tests/test_app.py`.

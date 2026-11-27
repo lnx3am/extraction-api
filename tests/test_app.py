@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from openai import (
     APIConnectionError,
+    APIStatusError,
     APITimeoutError,
     AuthenticationError,
     BadRequestError,
@@ -17,6 +18,33 @@ from openai import (
 )
 
 from extraction_api.app import Ticket, create_app, extract_live
+
+
+@pytest.mark.parametrize("status,expected", [(400, 502), (401, 502), (403, 502),
+                                          (404, 502), (422, 502), (408, 503),
+                                          (409, 503), (429, 503), (500, 503), (503, 503)])
+def test_provider_http_failures_are_sanitized_and_do_not_reserve_key(
+    tmp_path, monkeypatch, status, expected,
+):
+    monkeypatch.delenv("PORTFOLIO_API_KEY", raising=False)
+    error = APIStatusError("sensitive provider details", response=httpx.Response(
+        status, request=httpx.Request("POST", "https://provider.example.test/responses")),
+        body={"secret": "provider detail"})
+    ticket = Ticket(category="technical", urgency=3, summary="Cannot log in", needs_human=True)
+    extractor = Mock(side_effect=[error, ticket])
+    path = tmp_path / "extract.db"
+    client = TestClient(create_app(extractor, str(path)))
+    payload = {"text": "Cannot log into my account"}
+    headers = {"idempotency-key": "provider-http-error"}
+    response = client.post("/extract", headers=headers, json=payload)
+    assert response.status_code == expected
+    assert response.json() == {"detail": "extraction provider request failed"
+                               if expected == 502 else "extraction unavailable"}
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
+    for _ in range(2):
+        assert client.post("/extract", headers=headers, json=payload).json() == ticket.model_dump()
+    assert extractor.call_count == 2
 
 
 @pytest.mark.parametrize("urgency", [True, "3", 3.0])
