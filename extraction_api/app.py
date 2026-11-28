@@ -15,10 +15,7 @@ from fastapi import FastAPI, Header, HTTPException
 from openai import (
     APIConnectionError,
     APIStatusError,
-    APITimeoutError,
-    InternalServerError,
     OpenAI,
-    RateLimitError,
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -70,7 +67,10 @@ def extract_live(text: str) -> Ticket:
                 if response.output_parsed is None:
                     raise ValueError("model returned no structured output")
                 return response.output_parsed
-            except (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError) as exc:
+            except (APIConnectionError, APIStatusError) as exc:
+                if (isinstance(exc, APIStatusError) and exc.status_code < 500
+                        and exc.status_code not in (408, 409, 429)):
+                    raise
                 last_error = exc
                 if attempt < 2:
                     time.sleep(0.25 * 2**attempt)

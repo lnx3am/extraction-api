@@ -269,13 +269,13 @@ def test_blank_idempotency_key_is_rejected_before_extraction(tmp_path, monkeypat
     assert calls == [payload["text"]]
 
 
-@pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError, RateLimitError,
-                                      InternalServerError])
+@pytest.mark.parametrize("status,error_type", [(None, APIConnectionError), (None, APITimeoutError),
+                                             (408, APIStatusError), (409, APIStatusError),
+                                             (429, RateLimitError), (503, InternalServerError)])
 @pytest.mark.parametrize("recover", [False, True])
-def test_live_extraction_retries_are_bounded(monkeypatch, error_type, recover):
+def test_live_extraction_retries_are_bounded(monkeypatch, status, error_type, recover):
     request = httpx.Request("POST", "https://provider.example.test/responses")
-    if error_type in (RateLimitError, InternalServerError):
-        status = 429 if error_type is RateLimitError else 503
+    if status is not None:
         error = error_type("temporarily unavailable",
                            response=httpx.Response(status, request=request), body=None)
     else:

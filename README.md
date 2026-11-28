@@ -16,6 +16,7 @@ Ticket urgency requires an integer from 1 to 5; booleans, strings, and floats ar
 Extracted tickets reject unknown fields. Unsupported extractor output returns HTTP 503 without caching, so the same idempotency key can be retried.
 
 Permanent provider HTTP failures (such as invalid credentials or an unavailable model) return HTTP 502 with a generic message that excludes provider details. Transient provider failures return HTTP 503. Neither failure caches a result or reserves the idempotency key.
+Provider HTTP 408 and 409 responses receive the same bounded retries as rate limits and server failures.
 
 ## Concepts and choices
 
